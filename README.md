@@ -18,18 +18,29 @@ A SQL-like command line / REPL client for ElasticSearch
 ### SEARCH SYNTAX
 
     SELECT {fields}
-        [FACETS facet-fields]
         [SCRIPT script-field = 'script']
         FROM index
         [WHERE where-condition]
+        [USE ANALYZER analyzer_name]
         [FILTER filter-condition]
         [ORDERY BY order-fields]
         [LIMIT [start,] count]
+        [BROWSER BY facets]
 
 where:
+
     fields: '*' or comma-separated list of field names to be returned
 
-    facet-fields: comma-separated list of fields to execute a facet query on
+    facets:
+        terms facet:
+            comma-separated list of fields to execute a terms facet on
+            facet_name(TERMS, field name or script field,  (optional)size,  (optional)order by,  (optional)global boolean)
+
+        statistical facet:
+            facet_name(STATISTICAL, field or script or fileds list,   (optional)global boolean)
+
+        terms stats facet:
+            facet_name(TERM_STATS, key field name, value field or value script,  (optional)size,  (optional)order by,  (optional)global boolean)
 
     script-field: name of script field, to be used in select clause
     script: ElasticSearch script
@@ -47,6 +58,9 @@ where:
 
     or where-condition:
         'query in Lucene syntax'
+
+     use analyzer:
+        set which analyzer to use in the search condition
 
     filter-condition: 
         QUERY {where-condition} - query filter, same syntax as where condition
@@ -83,11 +97,11 @@ You can also run the command without installing as:
 
 	python -m elseql.elseql
 
-To do this you will need the pyparsing, rawes and cmd2 packages installed, that are automatically installed in the previous step.
+To do this you will need the pyparsing, elasticsearch and cmd2 packages installed, that are automatically installed in the previous step.
 
 	sudo easy_install pyparsing
 	sudo easy_install rawes
-        sudo easy_install cmd2
+    sudo easy_install cmd2
 
 The cmd2 package add a few extra features "command-line" related features. The most useful is redirection:
 

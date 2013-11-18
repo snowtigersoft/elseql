@@ -87,7 +87,7 @@ class ElseShell(Cmd):
         self.init_search()
 
     def init_search(self):
-        self.search = ElseSearch(self.port, self.debug)
+        self.search = ElseSearch(self.port, self.debug, cmd=True)
 
         if self.search.host:
             print("connected to", self.search.host)
@@ -135,6 +135,13 @@ class ElseShell(Cmd):
             pprint.pprint(mapping[line])
         else:
             pprint.pprint(mapping)
+
+    def do_indices(self, line):
+        indices = self.search.get_indices()
+        if line:
+            pprint.pprint(line in indices)
+        else:
+            pprint.pprint(indices)
 
     def do_select(self, line):
         self.search.search('select ' + line)

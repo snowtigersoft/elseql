@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 from __future__ import print_function
+import json
 
 from requests.exceptions import ConnectionError
 
@@ -38,9 +39,10 @@ def _csvline(l):
 
 class ElseSearch(object):
 
-    def __init__(self, port=None, debug=False):
+    def __init__(self, port=None, debug=False, cmd=False):
         self.debug = debug
         self.print_query = False
+        self.cmd = cmd
 
         #if self.debug:
         #    requests_defaults['verbose'] = DebugPrinter()
@@ -74,6 +76,13 @@ class ElseSearch(object):
             print(err)
 
         return self.mapping
+
+    def get_indices(self):
+        mapping = self.get_mapping()
+        indices = []
+        for i in mapping:
+            indices.append(i)  # index name
+        return indices
 
     def get_keywords(self):
         if self.keywords:
@@ -119,6 +128,8 @@ class ElseSearch(object):
         try:
             request = ElseParser.parse(query)
         except ElseParserException as err:
+            if not self.cmd:
+                raise err
             print(err.pstr)
             print(" " * err.loc + "^\n")
             print("ERROR:", err)
@@ -128,7 +139,9 @@ class ElseSearch(object):
         data_fields = None
 
         if request.query:
-            data = {'query': {'query_string': {'query': str(request.query), 'default_operator': 'AND'}}}
+                data = {'query': {'query_string': {'query': str(request.query), 'default_operator': 'AND'}}}
+                if request.analyzer:
+                    data['query']['query_string']['analyzer'] = request.analyzer
         else:
             data = {'query': {'match_all': {}}}
 
@@ -145,7 +158,50 @@ class ElseSearch(object):
 
         if request.facets:
             # data['facets'] = {f: {"terms": {"field": f}} for f in request.facets}  -- not in python 2.6
-            data['facets'] = dict((f, {"terms": {"field": f}}) for f in request.facets)
+            data['facets'] = {}
+            for f in request.facets:
+                if isinstance(f, basestring):
+                    data['facets'] = json.loads(str(f))
+                elif f.type == '':
+                    data['facets'][f.facet_name] = {
+                        'terms': {
+                            "field": f.facet_name
+                        }
+                    }
+                else:
+                    tmp = {f.type: {}}
+                    if f.type == 'terms':
+                        if f.field:
+                            tmp[f.type]['field'] = f.field
+                        elif f.fields:
+                            tmp[f.type]['fields'] = list(f.fields)
+                        if f.script_field:
+                            tmp[f.type]['script_field'] = f.script_field
+                        if f.size:
+                            tmp[f.type]['size'] = f.size
+                        if f.order:
+                            tmp[f.type]['order'] = f.order
+                    elif f.type == 'terms_stats':
+                        tmp[f.type]['key_field'] = f.key_field
+                        if f.script_field:
+                            tmp[f.type]['value_script'] = f.script_field
+                        else:
+                            tmp[f.type]['value_field'] = f.value_field
+                        if f.size:
+                            tmp[f.type]['size'] = f.size
+                        if f.order:
+                            tmp[f.type]['order'] = f.order
+                    elif f.type == 'statistical':
+                        if f.field:
+                            tmp[f.type]['field'] = f.field
+                        elif f.fields:
+                            tmp[f.type]['fields'] = list(f.fields)
+                        if f.script_field:
+                            tmp[f.type]['script'] = f.script_field
+                    if f.is_global:
+                        tmp[f.type]['global'] = f.is_global
+
+                    data['facets'][f.facet_name] = tmp
 
         if request.script:
             data['script_fields'] = {request.script[0]: {"script": request.script[1]}}
@@ -229,6 +285,8 @@ class ElseSearch(object):
             try:
                 result = self.es.get(command_path, params=params, data=data)
             except ConnectionError as err:
+                if not self.cmd:
+                    raise err
                 print("cannot connect to", self.es.url)
                 print(err)
                 return
@@ -248,6 +306,9 @@ class ElseSearch(object):
             else:
                 # done
                 do_query = False
+
+            if not self.cmd:
+                return result
 
             if 'valid' in result:
                 if 'explanations' in result:

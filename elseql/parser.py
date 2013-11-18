@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 from __future__ import print_function
+import json
 from pyparsing import *
 
 class Operator(object):
@@ -31,7 +32,7 @@ class BinaryOperator(Operator):
     def __str__(self):
         if self.name == '=':
             return "%s:%s" % (self.operands[0], self.op(1))
-        elif self.name == '!=':
+        elif self.name == '!=' or self.name == '<>':
             return "NOT (%s:%s)" % (self.operands[0], self.op(1))
         elif self.name in ['<=', 'LTE', 'LE']:
             return "%s:[* TO %s]" % (self.operands[0], self.op(1))
@@ -46,7 +47,7 @@ class BinaryOperator(Operator):
 
 class LikeOperator(Operator):
     name = 'LIKE'
-    
+
     def __str__(self):
         return "%s:%s" % (self.operands[0], self.operands[1].replace('*','\*').replace('%','*'))
 
@@ -58,7 +59,7 @@ class BetweenOperator(Operator):
 
 class InOperator(Operator):
     name = 'IN'
-    
+
     def __init__(self, operands):
         self.operands = [operands[0], operands[1:]]
 
@@ -71,7 +72,7 @@ class AndOperator(Operator):
         self.operands = [x for x in operands[0] if not isinstance(x, basestring)]
 
     def __str__(self):
-        return ' AND '.join([self.val(x) for x in self.operands])
+        return '(%s)' % ' AND '.join([self.val(x) for x in self.operands])
 
 class OrOperator(Operator):
     def __init__(self, operands=None):
@@ -79,7 +80,7 @@ class OrOperator(Operator):
         self.operands = [x for x in operands[0] if not isinstance(x, basestring)]
 
     def __str__(self):
-        return ' OR '.join([self.val(x) for x in self.operands])
+        return '(%s)' % ' OR '.join([self.val(x) for x in self.operands])
 
 class NotOperator(Operator):
     def __init__(self, operands=None):
@@ -115,7 +116,6 @@ class MissingFilter(Operator):
 
 def makeGroupObject(cls):
     def groupAction(s,loc,tokens):
-        #print("GROUPACTION %s" % tokens)
         return cls(tokens)
     return groupAction
 
@@ -139,17 +139,24 @@ def makeAtomObject(fn):
             return fn(tokens)
     return atomAction
 
+
+def facet_type(type_name):
+        return CaselessKeyword(type_name.lower()).setResultsName('type')
+
+
 class ElseParserException(ParseBaseException):
     pass
+
 
 class ElseParser(object):
     # define SQL tokens
     selectStmt   = Forward()
     selectToken  = CaselessKeyword("SELECT")
-    facetToken   = CaselessKeyword("FACETS")
+    facetToken   = CaselessKeyword("BROWSE BY")
     scriptToken  = CaselessKeyword("SCRIPT")
     fromToken    = CaselessKeyword("FROM")
     whereToken   = CaselessKeyword("WHERE")
+    useAnalyzerToken = CaselessKeyword("USE ANALYZER")
     orderbyToken = CaselessKeyword("ORDER BY")
     limitToken   = CaselessKeyword("LIMIT")
     between      = CaselessKeyword("BETWEEN")
@@ -164,6 +171,14 @@ class ElseParser(object):
     existToken   = CaselessKeyword("EXIST")
     missingToken = CaselessKeyword("MISSING")
 
+    E      = CaselessLiteral("E")
+    binop  = oneOf("= >= <= < > <> != LT LTE LE GT GTE GE", caseless=True)
+    lpar   = Suppress("(")
+    rpar   = Suppress(")")
+    comma  = Suppress(",")
+
+    arithSign = Word("+-", exact=1)
+
     ident          = Word( alphas + "_", alphanums + "_$" ).setName("identifier")
     columnName     = delimitedList( ident, ".", combine=True )
     columnNameList = Group( delimitedList( columnName ) )
@@ -172,21 +187,13 @@ class ElseParser(object):
     #likeExpression fore SQL LIKE expressions
     likeExpr       = quotedString.setParseAction( removeQuotes )
 
-    E      = CaselessLiteral("E")
-    binop  = oneOf("= >= <= < > <> != LT LTE LE GT GTE GE", caseless=True)
-    lpar   = Suppress("(")
-    rpar   = Suppress(")")
-    comma  = Suppress(",")
-
-    arithSign = Word("+-",exact=1)
-
-    realNum = Combine( 
+    realNum = Combine(
         Optional(arithSign) +
         ( Word( nums ) + "." + Optional( Word(nums) ) | ( "." + Word(nums) ) ) +
         Optional( E + Optional(arithSign) + Word(nums) ) ) \
             .setParseAction(makeAtomObject(floatValue))
 
-    intNum = Combine( Optional(arithSign) + Word( nums ) + 
+    intNum = Combine( Optional(arithSign) + Word( nums ) +
         Optional( E + Optional("+") + Word(nums) ) ) \
             .setParseAction(makeAtomObject(intValue))
 
@@ -196,11 +203,10 @@ class ElseParser(object):
     columnRval = realNum | intNum | boolean | quotedString.setParseAction( removeQuotes )
 
     whereCondition = ( columnName + binop + columnRval ) \
-            .setParseAction(makeGroupObject(BinaryOperator)) \
+            .setParseAction(makeGroupObject(BinaryOperator)).setResultsName('term') \
        | ( columnName + in_.suppress() + lpar + delimitedList( columnRval ) + rpar ).setParseAction(makeGroupObject(InOperator)) \
        | ( columnName + between.suppress() + columnRval + and_.suppress() + columnRval ).setParseAction(makeGroupObject(BetweenOperator)) \
-       | ( columnName + likeop.suppress() + likeExpr  ).setParseAction(makeGroupObject(LikeOperator)) \
-       | Empty().setParseAction(invalidSyntax)
+       | ( columnName + likeop.suppress() + likeExpr  ).setParseAction(makeGroupObject(LikeOperator))
 
     boolOperand = whereCondition | boolean
 
@@ -216,29 +222,52 @@ class ElseParser(object):
         | (existToken.suppress() + columnName).setParseAction(makeGroupObject(ExistFilter)) \
         | (missingToken.suppress() + columnName).setParseAction(makeGroupObject(MissingFilter))
 
+    #facets
+    facetGlobal = Optional((comma + boolean.setResultsName('is_global')), default=False)
+    facetSize = Optional(comma + intNum.setResultsName('size'), default=10)
+    columnNameOrScript = columnName.setResultsName('field') | quotedString.setResultsName('script_field')
+    columnNameOrScriptOrColumns = columnNameOrScript \
+        | (lpar + Group(delimitedList(columnName)).setResultsName('fields') + rpar)
+
+    #terms facet
+    facetTermsOrder = oneOf("count term reverse_count reverse_term", caseless=True)
+    facetTermsType = facet_type("TERMS") + comma + columnNameOrScriptOrColumns + facetSize \
+        + Optional(comma + facetTermsOrder.setResultsName('order')) + facetGlobal
+    #terms states facet
+    facetTermStatesOrder = oneOf("term reverse_term count reverse_count total reverse_total min reverse_min max reverse_max mean reverse_mean", caseless=True)
+    facetTermStatesType = facet_type("TERMS_STATS") + comma + columnName.setResultsName('key_field') \
+        + comma + columnNameOrScript.setResultsName('value_field') + facetSize \
+        + Optional(comma + facetTermsOrder.setResultsName('order')) + facetGlobal
+    #statistical facet
+    facetStatisticalType = facet_type("STATISTICAL") + comma \
+        + columnNameOrScriptOrColumns + facetGlobal
+
+    facetTypes = facetTermsType | facetTermStatesType | facetStatisticalType
+    facetExpression = quotedString.setParseAction(removeQuotes) \
+        | Group(delimitedList(Group(columnName.setResultsName('facet_name') + Optional(lpar + facetTypes + rpar))))
+
     orderseq  = oneOf("asc desc", caseless=True)
-    orderList = delimitedList( 
-        Group( columnName + Optional(orderseq, default="asc") ) )
+    orderList = delimitedList(Group(columnName + Optional(orderseq, default="asc")))
 
     limitoffset = intNum
     limitcount  = intNum
 
     #selectExpr  = ( 'count(*)' | columnNameList | '*' )
-    selectExpr  = ( columnNameList | '*' )
-    facetExpr = columnNameList
+    selectExpr = (columnNameList | '*' | (CaselessKeyword('COUNT') + lpar + '*' + rpar))
     scriptExpr = columnName + Suppress("=") + quotedString.setParseAction( removeQuotes )
 
     # define the grammar
-    selectStmt << ( selectToken + 
-        selectExpr.setResultsName( "fields" ) + 
-        Optional(facetToken + facetExpr.setResultsName( "facets" )) +
-        Optional(scriptToken + scriptExpr.setResultsName( "script" )) +
-        fromToken + indexName.setResultsName( "index" ) +
+    selectStmt << (selectToken +
+        selectExpr.setResultsName("fields") +
+        Optional(scriptToken + scriptExpr.setResultsName("script")) +
+        fromToken + indexName.setResultsName("index") +
         Optional(whereToken + whereExpression.setResultsName("query")) +
+        Optional(useAnalyzerToken + ident.setResultsName("analyzer")) +
         Optional(filterToken + filterExpression.setResultsName("filter")) +
-        Optional(orderbyToken + orderList.setResultsName("order")) + 
-        Optional(limitToken +Group( Optional(limitoffset + comma) + limitcount ).setResultsName("limit"))
-       )
+        Optional(orderbyToken + orderList.setResultsName("order")) +
+        Optional(limitToken + Group(Optional(limitoffset + comma) + limitcount).setResultsName("limit")) +
+        Optional(facetToken + facetExpression.setResultsName("facets"))
+    )
 
     grammar_parser = selectStmt
 
@@ -258,14 +287,68 @@ class ElseParser(object):
 
         try:
             response = ElseParser.parse(stmt)
+            print(response.query)
             print("index  = ", response.index)
             print("fields = ", response.fields)
             print("query  = ", response.query)
+            print("analyzer  = ", response.analyzer)
             print("script = ", response.script)
             print("filter = ", response.filter)
             print("order  = ", response.order)
             print("limit  = ", response.limit)
             print("facets = ", response.facets)
+            print("FACETS Parsed:")
+            if response.query:
+                data = {'query': {'query_string': {'query': str(response.query), 'default_operator': 'AND'}}}
+                if response.analyzer:
+                    data['query']['query_string']['analyzer'] = response.analyzer
+            else:
+                data = {'query': {'match_all': {}}}
+            data['facets'] = {}
+            for f in response.facets:
+                if isinstance(f, basestring):
+                    data['facets'] = json.loads(str(f))
+                elif f.type == '':
+                    data['facets'][f.facet_name] = {
+                        'terms': {
+                            "field": f.facet_name
+                        }
+                    }
+                else:
+                    tmp = {f.type: {}}
+                    if f.type == 'terms':
+                        if f.field:
+                            tmp[f.type]['field'] = f.field
+                        elif f.fields:
+                            tmp[f.type]['fields'] = list(f.fields)
+                        if f.script_field:
+                            tmp[f.type]['script_field'] = f.script_field
+                        if f.size:
+                            tmp[f.type]['size'] = f.size
+                        if f.order:
+                            tmp[f.type]['order'] = f.order
+                    elif f.type == 'terms_stats':
+                        tmp[f.type]['key_field'] = f.key_field
+                        if f.script_field:
+                            tmp[f.type]['value_script'] = f.script_field
+                        else:
+                            tmp[f.type]['value_field'] = f.value_field
+                        if f.size:
+                            tmp[f.type]['size'] = f.size
+                        if f.order:
+                            tmp[f.type]['order'] = f.order
+                    elif f.type == 'statistical':
+                        if f.field:
+                            tmp[f.type]['field'] = f.field
+                        elif f.fields:
+                            tmp[f.type]['fields'] = list(f.fields)
+                        if f.script_field:
+                            tmp[f.type]['script'] = f.script_field
+                    if f.is_global:
+                        tmp[f.type]['global'] = f.is_global
+
+                    data['facets'][f.facet_name] = tmp
+            print(json.dumps(data))
 
         except ElseParserException as err:
             print(err.pstr)
@@ -277,5 +360,8 @@ class ElseParser(object):
 if __name__ == '__main__':
     import sys
 
-    stmt = " ".join(sys.argv[1:])
+    if len(sys.argv) > 1:
+        stmt = " ".join(sys.argv[1:])
+    else:
+        stmt = "select * from weibo_status where (text like '%cool and warm' or  gender in ('m')) and user_prov between '*' and 90 use analyzer ik order by uid limit 2,10  browse by cid1(terms,cid, 10, count, true), cid2(terms_stats, cid, cid, 10, count, false), st(STATISTICAL, (cid, user_prov) , true)"
     ElseParser.test(stmt)
