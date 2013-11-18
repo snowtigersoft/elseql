@@ -51,7 +51,7 @@ SETUP_OPTIONS = dict(
                 ],
 
     install_requires=['pyparsing' + pyparsing_version,
-                      'elasticsearch',
+                      'rawes',
                       'cmd2',
                       ],
 
