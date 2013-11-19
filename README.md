@@ -102,6 +102,7 @@ To do this you will need the pyparsing, elasticsearch and cmd2 packages installe
 	sudo easy_install pyparsing
 	sudo easy_install rawes
     sudo easy_install cmd2
+    sudo easy_install dateutil
 
 The cmd2 package add a few extra features "command-line" related features. The most useful is redirection:
 

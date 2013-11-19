@@ -2,7 +2,10 @@
 
 from __future__ import print_function
 import json
+from dateutil import parser
 from pyparsing import *
+import time
+
 
 class Operator(object):
     name = '<UnknownOperator>'
@@ -39,9 +42,9 @@ class BinaryOperator(Operator):
         elif self.name in ['>=', 'GTE', 'GE']:
             return "%s:[%s TO *]" % (self.operands[0], self.op(1))
         elif self.name in ['<', 'LT']:
-            return "%s:{* TO %s}" % (self.operands[0], self.op(1))
+            return "%s:[* TO %s]" % (self.operands[0], self.op(1))
         elif self.name in ['>', 'GT']:
-            return "%s:{%s TO *}" % (self.operands[0], self.op(1))
+            return "%s:[%s TO *]" % (self.operands[0], self.op(1))
         else:
             return "%s %s %s" % (self.operands[0], self.name, self.op(1))
 
@@ -128,15 +131,21 @@ def intValue(t):
 def floatValue(t):
     return float(t)
 
+def timestampValue(t):
+    return int(time.mktime(parser.parse(t).timetuple()))
+
 def boolValue(t):
     return t.lower() == 'true'
 
 def makeAtomObject(fn):
     def atomAction(s, loc, tokens):
         try:
-            return fn(tokens[0])
-        except:
-            return fn(tokens)
+            if isinstance(tokens[0], basestring):
+                return fn(tokens[0])
+            else:
+                return fn(tokens)
+        except Exception as e:
+            raise ParseFatalException(s, loc, e.message)
     return atomAction
 
 
@@ -182,7 +191,7 @@ class ElseParser(object):
     ident          = Word( alphas + "_", alphanums + "_$" ).setName("identifier")
     columnName     = delimitedList( ident, ".", combine=True )
     columnNameList = Group( delimitedList( columnName ) )
-    indexName      = delimitedList( ident, ".", combine=True )
+    indexName = Combine(delimitedList(ident + Optional("*"), ",", combine=True) + Optional("." + ident))
 
     #likeExpression fore SQL LIKE expressions
     likeExpr       = quotedString.setParseAction( removeQuotes )
@@ -200,7 +209,10 @@ class ElseParser(object):
     boolean = oneOf("true false", caseless=True) \
         .setParseAction(makeAtomObject(boolValue))
 
-    columnRval = realNum | intNum | boolean | quotedString.setParseAction( removeQuotes )
+    unix_timestamp = (Suppress(CaselessKeyword('UNIX_TIMESTAMP')) + lpar + quotedString + rpar) \
+        .setParseAction(makeAtomObject(timestampValue))
+
+    columnRval = realNum | intNum | boolean | unix_timestamp | quotedString.setParseAction( removeQuotes )
 
     whereCondition = ( columnName + binop + columnRval ) \
             .setParseAction(makeGroupObject(BinaryOperator)).setResultsName('term') \
@@ -287,7 +299,7 @@ class ElseParser(object):
 
         try:
             response = ElseParser.parse(stmt)
-            print(response.query)
+            print(str(response.query).find('created_at'))
             print("index  = ", response.index)
             print("fields = ", response.fields)
             print("query  = ", response.query)
@@ -363,5 +375,5 @@ if __name__ == '__main__':
     if len(sys.argv) > 1:
         stmt = " ".join(sys.argv[1:])
     else:
-        stmt = "select * from weibo_status where (text like '%cool and warm' or  gender in ('m')) and user_prov between '*' and 90 use analyzer ik order by uid limit 2,10  browse by cid1(terms,cid, 10, count, true), cid2(terms_stats, cid, cid, 10, count, false), st(STATISTICAL, (cid, user_prov) , true)"
+        stmt = "select * from user_*,test,weibo_statu_*.type where (text like '%cool and warm' or  gender in ('m')) and city=1 and created_at>UNIX_TIMESTAMP('2013') or created_at between UNIX_TIMESTAMP('2013-10-14') and UNIX_TIMESTAMP('2014') and user_prov between '*' and 90 use analyzer ik order by uid limit 2,10  browse by cid1(terms,cid, 10, count, true), cid2(terms_stats, cid, cid, 10, count, false), st(STATISTICAL, (cid, user_prov) , true)"
     ElseParser.test(stmt)
