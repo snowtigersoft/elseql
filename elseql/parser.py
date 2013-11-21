@@ -137,13 +137,18 @@ def timestampValue(t):
 def boolValue(t):
     return t.lower() == 'true'
 
+def function_now(t):
+        return int(time.time())
+
 def makeAtomObject(fn):
     def atomAction(s, loc, tokens):
         try:
-            if isinstance(tokens[0], basestring):
-                return fn(tokens[0])
-            else:
+            return fn(tokens[0])
+        except TypeError:
+            try:
                 return fn(tokens)
+            except Exception as e:
+                raise ParseFatalException(s, loc, e.message)
         except Exception as e:
             raise ParseFatalException(s, loc, e.message)
     return atomAction
@@ -180,6 +185,8 @@ class ElseParser(object):
     existToken   = CaselessKeyword("EXIST")
     missingToken = CaselessKeyword("MISSING")
 
+    nowFuncToken = CaselessKeyword("NOW")
+
     E      = CaselessLiteral("E")
     binop  = oneOf("= >= <= < > <> != LT LTE LE GT GTE GE", caseless=True)
     lpar   = Suppress("(")
@@ -212,7 +219,11 @@ class ElseParser(object):
     unix_timestamp = (Suppress(CaselessKeyword('UNIX_TIMESTAMP')) + lpar + quotedString + rpar) \
         .setParseAction(makeAtomObject(timestampValue))
 
-    columnRval = realNum | intNum | boolean | unix_timestamp | quotedString.setParseAction( removeQuotes )
+    #functipn support
+    func_now = (nowFuncToken+lpar+rpar).setParseAction(makeAtomObject(function_now))
+    funcs = func_now
+
+    columnRval = realNum | intNum | boolean | unix_timestamp | funcs | quotedString.setParseAction(removeQuotes)
 
     whereCondition = ( columnName + binop + columnRval ) \
             .setParseAction(makeGroupObject(BinaryOperator)).setResultsName('term') \
@@ -375,5 +386,7 @@ if __name__ == '__main__':
     if len(sys.argv) > 1:
         stmt = " ".join(sys.argv[1:])
     else:
-        stmt = "select * from user_*,test,weibo_statu_*.type where (text like '%cool and warm' or  gender in ('m')) and city=1 and created_at>UNIX_TIMESTAMP('2013') or created_at between UNIX_TIMESTAMP('2013-10-14') and UNIX_TIMESTAMP('2014') and user_prov between '*' and 90 use analyzer ik order by uid limit 2,10  browse by cid1(terms,cid, 10, count, true), cid2(terms_stats, cid, cid, 10, count, false), st(STATISTICAL, (cid, user_prov) , true)"
+        #stmt = "select * from user_*,test,weibo_statu_*.type where (text like '%cool and warm' or  gender in ('m')) and city=1 and created_at>UNIX_TIMESTAMP('2013') or created_at between UNIX_TIMESTAMP('2013-10-14') and UNIX_TIMESTAMP('2014') and user_prov between '*' and 90 use analyzer ik order by uid limit 2,10  browse by cid1(terms,cid, 10, count, true), cid2(terms_stats, cid, cid, 10, count, false), st(STATISTICAL, (cid, user_prov) , true)"
+        #test function
+        stmt = "select * from user where created_time<now()"
     ElseParser.test(stmt)
