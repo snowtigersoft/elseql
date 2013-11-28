@@ -56,10 +56,36 @@ where:
         {where-condition} AND {where-condition}
         {where-condition} OR {where-condition}
 
+        value:
+            integer OR string OR boolean OR functions
+
+        functions:
+            #Returns the current date and time , format "%Y-%m-%d %H:%M:%S"
+            now()
+
+            #Returns the current date , format "%Y-%m-%d"
+            curdate()
+
+            #Adds a specified time interval to a date
+            date_add({date}, {expr}, {type})
+            #Where date is a valid date expression and expr is the number of interval you want to add.
+            #type can be one of the following:YEAR MONTH DAY HOUR MINUTE SECOND WEEK
+            #Example: date_add('2013-11-28', 1, day),  date_add(now(), 1, month)
+
+            #Subtracts a specified time interval to a date
+            date_sub({date}, {expr}, {type})
+            #Where date is a valid date expression and expr is the number of interval you want to subtract.
+            #type can be one of the following:YEAR MONTH DAY HOUR MINUTE SECOND WEEK
+            #Example: date_sub('2013-11-28', 1, day),  date_sub(now(), 1, year)
+
+            #Parse a valid date expression to timestamp
+            timestamp({date})
+            #Example: timestamp('2013-11-28'),  timestamp(date_add(now(), 1, month))
+
     or where-condition:
         'query in Lucene syntax'
 
-     use analyzer:
+    use analyzer:
         set which analyzer to use in the search condition
 
     filter-condition: 
@@ -103,6 +129,7 @@ To do this you will need the pyparsing, elasticsearch and cmd2 packages installe
 	sudo easy_install rawes
     sudo easy_install cmd2
     sudo easy_install python-dateutil
+    sudo easy_install delorean
 
 The cmd2 package add a few extra features "command-line" related features. The most useful is redirection:
 

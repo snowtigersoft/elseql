@@ -53,7 +53,8 @@ SETUP_OPTIONS = dict(
     install_requires=['pyparsing' + pyparsing_version,
                       'rawes',
                       'cmd2',
-                      'python-dateutil'
+                      'python-dateutil',
+                      'delorean'
                       ],
 
     entry_points="""

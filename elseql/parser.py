@@ -2,8 +2,10 @@
 
 from __future__ import print_function
 import json
+import datetime
 from dateutil import parser
 from pyparsing import *
+from delorean import parse
 import time
 
 
@@ -138,7 +140,26 @@ def boolValue(t):
     return t.lower() == 'true'
 
 def function_now(t):
-        return int(time.time())
+    dt = datetime.datetime.now()
+    return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+def function_cur_date(t):
+    dt = datetime.datetime.now()
+    return dt.strftime("%Y-%m-%d")
+
+def function_data_add(t):
+    if not isinstance(t, ParseResults):
+        raise TypeError('should be ParseResults type')
+    cur_date, num, tp = t[0], t[1], t[2]
+    d = parse(cur_date).__getattr__('next_%s' % tp.lower())(int(num))
+    return d.datetime.strftime("%Y-%m-%d %H:%M:%S")
+
+def function_data_sub(t):
+    if not isinstance(t, ParseResults):
+        raise TypeError('should be ParseResults type')
+    cur_date, num, tp = t[0], t[1], t[2]
+    d = parse(cur_date).__getattr__('last_%s' % tp.lower())(int(num))
+    return d.datetime.strftime("%Y-%m-%d %H:%M:%S")
 
 def makeAtomObject(fn):
     def atomAction(s, loc, tokens):
@@ -186,6 +207,10 @@ class ElseParser(object):
     missingToken = CaselessKeyword("MISSING")
 
     nowFuncToken = CaselessKeyword("NOW")
+    curDateFuncToken = CaselessKeyword("CURDATE")
+    dateAddFuncToken = Suppress(CaselessKeyword("DATE_ADD"))
+    dateSubFuncToken = Suppress(CaselessKeyword("DATE_Sub"))
+    timestampFuncToken = Suppress(CaselessKeyword("TIMESTAMP"))
 
     E      = CaselessLiteral("E")
     binop  = oneOf("= >= <= < > <> != LT LTE LE GT GTE GE", caseless=True)
@@ -216,14 +241,21 @@ class ElseParser(object):
     boolean = oneOf("true false", caseless=True) \
         .setParseAction(makeAtomObject(boolValue))
 
-    unix_timestamp = (Suppress(CaselessKeyword('UNIX_TIMESTAMP')) + lpar + quotedString + rpar) \
+    #functipn support
+    date_type = oneOf("YEAR MONTH DAY HOUR MINUTE SECOND WEEK", caseless=True)
+    func_cur_date = (curDateFuncToken+lpar+rpar).setParseAction(makeAtomObject(function_cur_date))
+    func_now = (nowFuncToken+lpar+rpar).setParseAction(makeAtomObject(function_now))
+    func_date_date_time = func_now | func_cur_date
+    func_date_add = (dateAddFuncToken+lpar+func_date_date_time+comma+intNum+comma+date_type+rpar) \
+        .setParseAction(makeAtomObject(function_data_add))
+    func_date_sub = (dateSubFuncToken+lpar+func_date_date_time+comma+intNum+comma+date_type+rpar) \
+        .setParseAction(makeAtomObject(function_data_sub))
+    date_funcs = func_date_date_time | func_date_add | func_date_sub
+
+    unix_timestamp = (timestampFuncToken + lpar + (quotedString | date_funcs) + rpar) \
         .setParseAction(makeAtomObject(timestampValue))
 
-    #functipn support
-    func_now = (nowFuncToken+lpar+rpar).setParseAction(makeAtomObject(function_now))
-    funcs = func_now
-
-    columnRval = realNum | intNum | boolean | unix_timestamp | funcs | quotedString.setParseAction(removeQuotes)
+    columnRval = realNum | intNum | boolean | unix_timestamp | date_funcs | quotedString.setParseAction(removeQuotes)
 
     whereCondition = ( columnName + binop + columnRval ) \
             .setParseAction(makeGroupObject(BinaryOperator)).setResultsName('term') \
@@ -386,7 +418,7 @@ if __name__ == '__main__':
     if len(sys.argv) > 1:
         stmt = " ".join(sys.argv[1:])
     else:
-        #stmt = "select * from user_*,test,weibo_statu_*.type where (text like '%cool and warm' or  gender in ('m')) and city=1 and created_at>UNIX_TIMESTAMP('2013') or created_at between UNIX_TIMESTAMP('2013-10-14') and UNIX_TIMESTAMP('2014') and user_prov between '*' and 90 use analyzer ik order by uid limit 2,10  browse by cid1(terms,cid, 10, count, true), cid2(terms_stats, cid, cid, 10, count, false), st(STATISTICAL, (cid, user_prov) , true)"
+        #stmt = "select * from user_*,test,weibo_statu_*.type where (text like '%cool and warm' or  gender in ('m')) and city=1 and created_at>TIMESTAMP('2013') or created_at between TIMESTAMP('2013-10-14') and TIMESTAMP('2014') and user_prov between '*' and 90 use analyzer ik order by uid limit 2,10  browse by cid1(terms,cid, 10, count, true), cid2(terms_stats, cid, cid, 10, count, false), st(STATISTICAL, (cid, user_prov) , true)"
         #test function
-        stmt = "select * from user where created_time<now()"
+        stmt = "select * from user where created_time<timestamp(curdate()) and cc=timestamp(date_sub(curdate(), 1, DAY)) and dd=now()"
     ElseParser.test(stmt)
